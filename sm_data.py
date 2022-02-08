@@ -7,15 +7,15 @@ sm_data
 # < defines >--------------------------------------------------------------------------------------
 
 # DB connection
-D_CONN = None
+# D_CONN = None
 
 # websocket App
 D_WSAPP = None
 
-# SIROS RPLs set
-DSET_SIROS_RPLS = set()
+# SIROS RPLs dict
+DDCT_SIROS_RPLS = {}
 
-# flight RPLs set
-DSET_FLIGHT_RPLS = set()
+# flight RPLs dict
+DDCT_FLIGHT_RPLS = {}
 
 # -------------------------------------------------------------------------------------------------

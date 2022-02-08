@@ -136,8 +136,8 @@ def main():
     gdat.D_WSAPP.on_open = on_open
 
     # create DB connection (sqlite)
-    gdat.D_CONN = sqlite3.connect("odin.db")
-    assert gdat.D_CONN
+    # gdat.D_CONN = sqlite3.connect("odin.db")
+    # assert gdat.D_CONN
 
     # logger
     logging.info("RUNNING....")

@@ -96,8 +96,8 @@ def parse_registers(fs_registers, fdt_today):
     # logger
     logging.info("Parsing registers")
 
-    # RPLs set
-    lset_rpls = set()
+    # RPLs dictionary
+    ldct_rpls = {}
 
     # create CSV reader
     l_reader = csv.reader(fs_registers.splitlines(), delimiter=';')
@@ -130,20 +130,16 @@ def parse_registers(fs_registers, fdt_today):
         # callsign = airliner + flight no
         ls_callsign = llst_row[0] + llst_row[2]
 
-        # coloca na lista de RPLs
-        lset_rpls.add(ls_callsign)
-
-        # origem do vôo
-        ls_origem = llst_row[19]
-        # destino do vôo
-        ls_destino = llst_row[21]
-        # partida do vôo
-        ls_partida = llst_row[23]
-        # chegada do vôo
-        ls_chegada = llst_row[24]
+        # está na lista de RPLs ?
+        if not ls_callsign in ldct_rpls:
+            # coloca na lista de RPLs
+            ldct_rpls[ls_callsign] = {"origem": llst_row[19],     # origem do vôo
+                                      "destino": llst_row[21],    # destino do vôo
+                                      "partida": llst_row[23],    # partida do vôo
+                                      "chegada": llst_row[24]}    # chegada do vôo
 
     # return
-    return lset_rpls
+    return ldct_rpls
     
 # -------------------------------------------------------------------------------------------------
 def main():

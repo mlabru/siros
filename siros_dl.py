@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-get_regs
-download e parser do arquivo csv de registros do sirus
+siros_dl
+download e parser do arquivo csv de registros do SIROS
 
 2022/fev  1.0  mlabru   initial version (Linux/Python)
 """
@@ -32,6 +32,9 @@ DS_REGS_FN = "registros_{}.csv"
 def download_registers(fs_url, fs_fname):
     """
     download SIROS registers
+
+    :param fs_url (str): URL do SIROS
+    :param fs_fname (str): CSV filename
     """
     # logger
     logging.info(f"Downloading registers {fs_fname}")
@@ -76,22 +79,25 @@ def download_registers(fs_url, fs_fname):
 # -------------------------------------------------------------------------------------------------
 def get_siros():
     """
-    get list of siros RPLs for today
+    get list of SIROS RPLs for today
     """
     # creating the date object of today's date
     ldt_today = datetime.date.today()
-    # ldt_today = datetime.datetime.strptime("2022-02-06", "%Y-%m-%d").date()
+    # ldt_today = datetime.datetime.strptime("2022-02-16", "%Y-%m-%d").date()
 
     # download registers from SIROS site
     l_regs = download_registers(DS_REGS_URL.format(ldt_today.year), DS_REGS_FN.format(ldt_today))
 
-    # return
+    # return list of SIROS RPLs
     return parse_registers(l_regs, ldt_today)
 
 # -------------------------------------------------------------------------------------------------
 def parse_registers(fs_registers, fdt_today):
     """
     parse registers
+
+    :param fs_registers (str): SIROS registers
+    :param fdt_today (date): today's date
     """
     # logger
     logging.info("Parsing registers")
@@ -114,7 +120,7 @@ def parse_registers(fs_registers, fdt_today):
         # data de fim de operação
         ldt_data_fim = datetime.datetime.strptime(llst_row[16], "%Y-%m-%d").date()
 
-        # today is not between start and end dates ?
+        # à operar ?
         if not (ldt_data_ini <= fdt_today <= ldt_data_fim):
             # skip row
             continue
@@ -127,26 +133,91 @@ def parse_registers(fs_registers, fdt_today):
             # skip row
             continue
 
-        # callsign = airliner + flight no
-        ls_callsign = llst_row[0] + llst_row[2]
+        # flight number is all numbers ?
+        if llst_row[2].isdecimal():
+            # callsign = (airliner, flight no)
+            lt_callsign = (llst_row[0], int(llst_row[2]))
 
-        # está na lista de RPLs ?
-        if not ls_callsign in ldct_rpls:
+        else:             
+            # callsign = (airliner, flight no)
+            lt_callsign = (llst_row[0], llst_row[2])
+
+        # não está na lista de RPLs ?
+        if not lt_callsign in ldct_rpls:
+            # partida do vôo
+            ls_hour, ls_min = llst_row[23].split(':')
+            ldt_partida = datetime.datetime.combine(fdt_today, 
+                                                    datetime.time(hour=int(ls_hour), 
+                                                                  minute=int(ls_min), 
+                                                                  tzinfo=datetime.timezone.utc))
+            # chegada do vôo
+            ls_hour, ls_min = llst_row[24].split(':')
+            ldt_chegada = datetime.datetime.combine(fdt_today, 
+                                                    datetime.time(hour=int(ls_hour), 
+                                                                  minute=int(ls_min), 
+                                                                  tzinfo=datetime.timezone.utc))
+            # chegada no dia seguinte ?
+            if ldt_partida > ldt_chegada:
+                # acrescenta 1 dia 
+                ldt_chegada += datetime.timedelta(days=1)
+
             # coloca na lista de RPLs
-            ldct_rpls[ls_callsign] = {"origem": llst_row[19],     # origem do vôo
-                                      "destino": llst_row[21],    # destino do vôo
-                                      "partida": llst_row[23],    # partida do vôo
-                                      "chegada": llst_row[24]}    # chegada do vôo
+            ldct_rpls[lt_callsign] = {"partida": int(ldt_partida.timestamp() * 1000),   # partida
+                                      "chegada": int(ldt_chegada.timestamp() * 1000)}   # chegada
+            # codeshare ?
+            if llst_row[27]:
+                # trata codeshare
+                trata_codeshare(fdt_today, llst_row[27], ldct_rpls, lt_callsign)
 
-    # return
+    # return RPLs dictionary
     return ldct_rpls
     
+# -------------------------------------------------------------------------------------------------
+def trata_codeshare(fdt_today, fs_codeshare, fdct_rpls, ft_callsign):
+    """
+    trata codeshare
+    AZU/5321 início: 25/08/2020 fim: 26/03/2022, AZU/5321 início: 04/01/2022 fim: 26/02/2022, AZU/5321 ...
+
+    :param fdt_today (date): today's date
+    :param fs_codeshare (str): codeshares
+    :param fdct_rpls (dict): dicionário de RPL's
+    :param ft_callsign (tuple): callsign    
+    """
+    # split codeshares
+    llst_codeshares = fs_codeshare.split(',')
+
+    # for all codeshares...
+    for ls_codeshare in llst_codeshares:
+        # split codeshare tokens
+        llst_tokens = ls_codeshare.split()
+ 
+        # split callsign
+        llst_cs = llst_tokens[0].split('/')
+        
+        # callsign = (airliner, flight no)
+        lt_callsign = (llst_cs[0], int(llst_cs[1]) if llst_cs[1].isdecimal() else llst_cs[1])
+
+        # operational date ? 
+        if "..." != llst_tokens[1]:  
+            # data de início operação
+            ldt_data_ini = datetime.datetime.strptime(llst_tokens[2], "%d/%m/%Y").date()
+            # data de fim de operação
+            ldt_data_fim = datetime.datetime.strptime(llst_tokens[4], "%d/%m/%Y").date()
+
+            # à operar ?
+            if not (ldt_data_ini <= fdt_today <= ldt_data_fim):
+                # skip row
+                continue
+
+        # coloca na lista de RPLs
+        fdct_rpls[lt_callsign] = fdct_rpls[ft_callsign]
+
 # -------------------------------------------------------------------------------------------------
 def main():
     """
     drive application
     """
-    # get siros
+    # get SIROS
     get_siros()
     
 # -------------------------------------------------------------------------------------------------
@@ -157,7 +228,7 @@ if "__main__" == __name__:
     logging.basicConfig(level=DI_LOG_LEVEL)
 
     # disable logging
-    # logging.disable(sys.maxint)
+    # logging.disable(sys.maxsize)
     
     # run application
     sys.exit(main())

@@ -7,11 +7,14 @@ siros_mon
 # < imports >--------------------------------------------------------------------------------------
 
 # python library
+import datetime
 import json
 import logging
+import math
 import os
 import sys
 
+# websocket
 import websocket
 
 # .env
@@ -30,36 +33,56 @@ import siros_dl as sdl
 # < defines >--------------------------------------------------------------------------------------
 
 # logging level
-DI_LOG_LEVEL = logging.INFO
+DI_LOG_LEVEL = logging.DEBUG
 
 # -------------------------------------------------------------------------------------------------
-def check_rpl(flst_msg):
+def check_rpl(ft_callsign, fdct_flight):
     """
     callback
+    
+    :param ft_callsign (tuple): callsign
+    :param fi_timestamp (int): timestamp da detecção
     """
-    # for all flights...
-    for ldct_flight in flst_msg:
-        # ssr dict
-        ldct_ssr = ldct_flight.get("ssr", {})   
+    # timestamp
+    li_timestamp = fdct_flight.get("time", sys.maxsize)
 
-        if not ldct_ssr:
-            # skip
-            continue
+    # first sight ?
+    if not ft_callsign in gdat.DDCT_FLIGHT_RPLS:
+        # init SSR code
+        li_code = -1
 
-        # registration
-        ls_reg = ldct_ssr.get("registration", None)
+        # ssr dict: 'ssr': {'registration': 'PTGMU', 'transponder': {'code': 1839}}
+        ldct_ssr = fdct_flight.get("ssr", {})   
 
-        if not ls_reg:
-            # skip
-            continue
+        if ldct_ssr: 
+            # transponder
+            ldct_trp = ldct_ssr.get("transponder", {})
 
-        # flight in set ?
-        if ls_reg in gdat.DSET_SIROS_RPLS: 
-            # save on flight set
-            gdat.DSET_FLIGHT_RPLS.add(ls_reg)
+            if ldct_trp:
+                # SSR code
+                li_code = int(ldct_trp.get("code", -1))
 
-            # logger
-            print("FLIGHT_RPLS", gdat.DSET_FLIGHT_RPLS)
+        # time diff (adiantado < 0, on-time = 0, atrasado > 0)
+        li_diff = li_timestamp - gdat.DDCT_SIROS_RPLS[ft_callsign]["partida"]
+
+        # init flight dict
+        gdat.DDCT_FLIGHT_RPLS[ft_callsign] = {"code": li_code,
+                                              "first": li_timestamp,
+                                              "last": li_timestamp,
+                                              "diff": li_diff}
+        # logger
+        logging.debug("first sight of %s: %s from: %s [%s]", 
+                      str(ft_callsign), 
+                      str(gdat.DDCT_FLIGHT_RPLS[ft_callsign]), 
+                      str(gdat.DDCT_SIROS_RPLS[ft_callsign]), 
+                      str((li_diff // 3600000, (li_diff // 60000) % 60)))
+    # senão,...
+    else:
+        # update timestamp
+        gdat.DDCT_FLIGHT_RPLS[ft_callsign]["last"] = li_timestamp
+
+    # logger
+    # logging.debug("FLIGHT_RPLS: %s", str(gdat.DDCT_FLIGHT_RPLS))
 
 # -------------------------------------------------------------------------------------------------
 def on_closed(f_ws, p2, p3):
@@ -92,8 +115,8 @@ def on_msg(f_ws, fs_msg):
     llst_message = json.loads(fs_msg[li_ind - 1 : -1])["newPaths"]
     # logging.debug("message: %s", str(llst_message))
         
-    # check for RPLs
-    check_rpl(llst_message)
+    # scan message
+    scan_msg(llst_message)
     
 # -------------------------------------------------------------------------------------------------
 def on_open(f_ws):
@@ -110,6 +133,44 @@ def on_open(f_ws):
     logging.info("OPENING....")
 
 # -------------------------------------------------------------------------------------------------
+def scan_msg(flst_msg):
+    """
+    callback
+    """
+    # for all flights...
+    for ldct_flight in flst_msg:
+        # logger
+        # logging.debug("ldct_flight: %s", str(ldct_flight))
+
+        # ssr dict
+        ldct_ssr = ldct_flight.get("ssr", {})   
+
+        if not ldct_ssr:
+            # skip
+            continue
+
+        # registration
+        ls_reg = ldct_ssr.get("registration", None)
+
+        if not ls_reg:
+            # skip
+            continue
+
+        # flight number is all numbers ?
+        if ls_reg[3:].isdecimal():
+            # callsign = (airliner, flight no)
+            lt_callsign = (ls_reg[:3], int(ls_reg[3:]))
+
+        else:             
+            # callsign = (airliner, flight no)
+            lt_callsign = (ls_reg[:3], ls_reg[3:])
+
+        # flight in set ?
+        if lt_callsign in gdat.DDCT_SIROS_RPLS: 
+            # check for RPLs
+            check_rpl(lt_callsign, ldct_flight)
+
+# -------------------------------------------------------------------------------------------------
 def main():
     """
     drive app
@@ -118,7 +179,8 @@ def main():
     load_dotenv()
 
     # download e parser do arquivo csv de registros do siros
-    gdat.DSET_SIROS_RPLS = sdl.get_siros()
+    gdat.DDCT_SIROS_RPLS = sdl.get_siros()
+    # logging.debug("gdat.DDCT_SIROS_RPLS: %s", str(gdat.DDCT_SIROS_RPLS))
 
     # dis/enable websocket trace
     # websocket.enableTrace(True)

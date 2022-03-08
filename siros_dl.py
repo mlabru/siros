@@ -10,11 +10,13 @@ download e parser do arquivo csv de registros do SIROS
 # python library
 import csv
 import datetime
+import io
 import logging
 import os
 import pathlib
 import sys
 import requests
+import zipfile
 
 # .env
 from dotenv import load_dotenv
@@ -28,6 +30,10 @@ DI_LOG_LEVEL = logging.INFO
 DS_REGS_URL = "https://siros.anac.gov.br/siros/registros/registros/serie/{}/"
 DS_REGS_FN = "registros_{}.csv"
 
+# siros.anac.gov.br - codeshares
+DS_CDSH_URL = "https://siros.anac.gov.br/siros/registros/codeshare/serie/{}/"
+DS_CDSH_FN = "codeshare_{}.zip"
+
 # -------------------------------------------------------------------------------------------------
 def download_registers(fs_url, fs_fname):
     """
@@ -35,6 +41,8 @@ def download_registers(fs_url, fs_fname):
 
     :param fs_url (str): URL do SIROS
     :param fs_fname (str): CSV filename
+
+    :return (lst): registers CSV list 
     """
     # logger
     logging.info(f"Downloading registers {fs_fname}")
@@ -49,8 +57,8 @@ def download_registers(fs_url, fs_fname):
 
         # open local file 
         with open(ls_path, "r") as lfh:
-            # return read file
-            return lfh.read()
+            # return registers CSV list
+            return [row for row in csv.reader(lfh.read().splitlines(), delimiter=';')]
 
     # logger
     logging.info("Downloading from site...")
@@ -61,9 +69,12 @@ def download_registers(fs_url, fs_fname):
     # ok ?
     if 200 == l_response.status_code:
         # create registers file
-        with open(ls_path, "w") as lfh:
+        with open(ls_path, 'w') as lfh:
             # save registers
             lfh.write(l_response.text)
+
+            # return registers CSV list
+            return [row for row in csv.reader(l_response.text.splitlines(), delimiter=';')]
         
     # senão,...
     else:
@@ -73,8 +84,67 @@ def download_registers(fs_url, fs_fname):
         # quit with error
         sys.exit(255)
 
-    # return registers
-    return l_response.text
+    # return error
+    return None
+
+# -------------------------------------------------------------------------------------------------
+def download_codeshares(fs_url, fs_fname):
+    """
+    download SIROS codeshares
+
+    :param fs_url (str): URL do SIROS
+    :param fs_fname (str): CSV filename
+
+    :return (lst): codeshares CSV list 
+    """
+    # logger
+    logging.info(f"Downloading codeshares {fs_fname}")
+
+    # codeshares file path
+    ls_path = pathlib.Path(os.path.join("./registros", fs_fname))
+
+    # file exists ?
+    if ls_path.is_file():
+        # logger
+        logging.info("Reading from file...")
+
+        # open zipfile 
+        with zipfile.ZipFile(ls_path) as lzfh:
+            # open csv file 
+            with lzfh.open("codeshare.csv", 'r') as lfh:
+                # return codeshares CSV list
+                return [row for row in csv.reader(io.TextIOWrapper(lfh, "utf-8"), delimiter=';')]
+
+    # logger
+    logging.info("Downloading from site...")
+ 
+    # request de dados
+    l_response = requests.get(fs_url + fs_fname)
+
+    # ok ?
+    if 200 == l_response.status_code:
+        # zipfile
+        with open(ls_path, "wb") as lzfh:
+            # save zip file
+            lzfh.write(l_response.content)
+
+        # open zipfile
+        with zipfile.ZipFile(io.BytesIO(l_response.content)) as lzfh:
+            # open csv file 
+            with lzfh.open("codeshare.csv", 'r') as lfh:
+                # return codeshares CSV list
+                return [row for row in csv.reader(io.TextIOWrapper(lfh, "utf-8"), delimiter=';')]
+
+    # senão,...
+    else:
+        # logger
+        logging.fatal("siros.anac.gov.br está inacessível. Aborting.")
+
+        # quit with error
+        sys.exit(255)
+
+    # return error
+    return None
 
 # -------------------------------------------------------------------------------------------------
 def get_siros():
@@ -85,18 +155,118 @@ def get_siros():
     ldt_today = datetime.date.today()
     # ldt_today = datetime.datetime.strptime("2022-02-16", "%Y-%m-%d").date()
 
+    # download codeshares from SIROS site
+    llst_codeshares = download_codeshares(DS_CDSH_URL.format(ldt_today.year), DS_CDSH_FN.format(ldt_today))
+
+    # parse codeshares
+    ldct_codeshare = parse_codeshares(llst_codeshares, ldt_today)
+
     # download registers from SIROS site
-    l_regs = download_registers(DS_REGS_URL.format(ldt_today.year), DS_REGS_FN.format(ldt_today))
+    llst_regs = download_registers(DS_REGS_URL.format(ldt_today.year), DS_REGS_FN.format(ldt_today))
+
+    # parse codeshares
+    llst_regs = parse_registers(llst_regs, ldt_today)
+
+    # merge codeshares
+    llst_regs = merge_codeshare(llst_regs, ldct_codeshare)
 
     # return list of SIROS RPLs
-    return parse_registers(l_regs, ldt_today)
+    return llst_regs
 
 # -------------------------------------------------------------------------------------------------
-def parse_registers(fs_registers, fdt_today):
+def merge_codeshare(fdt_today, fs_codeshare, fdct_rpls, ft_callsign):
+    """
+    trata codeshare
+    AZU/5321 início: 25/08/2020 fim: 26/03/2022, AZU/5321 início: 04/01/2022 fim: 26/02/2022, AZU/5321 ...
+
+    :param fdt_today (date): today's date
+    :param fs_codeshare (str): codeshares
+    :param fdct_rpls (dict): dicionário de RPL's
+    :param ft_callsign (tuple): callsign    
+    """
+    # split codeshares
+    llst_codeshares = fs_codeshare.split(',')
+
+    # for all codeshares...
+    for ls_codeshare in llst_codeshares:
+        # split codeshare tokens
+        llst_tokens = ls_codeshare.split()
+ 
+        # split callsign
+        llst_cs = llst_tokens[0].split('/')
+        
+        # callsign = (airliner, flight no)
+        lt_callsign = (llst_cs[0], int(llst_cs[1]) if llst_cs[1].isdecimal() else llst_cs[1])
+
+        # operational date ? 
+        if "..." != llst_tokens[1]:  
+            # data de início operação
+            ldt_data_ini = datetime.datetime.strptime(llst_tokens[2], "%d/%m/%Y").date()
+            # data de fim de operação
+            ldt_data_fim = datetime.datetime.strptime(llst_tokens[4], "%d/%m/%Y").date()
+
+            # à operar ?
+            if not (ldt_data_ini <= fdt_today <= ldt_data_fim):
+                # skip row
+                continue
+
+        # coloca na lista de RPLs
+        fdct_rpls[lt_callsign] = fdct_rpls[ft_callsign]
+
+# -------------------------------------------------------------------------------------------------
+def parse_codeshares(flst_codeshares, fdt_today):
+    """
+    parse codeshares
+
+    :param flst_codeshares (list): list of SIROS codeshares
+    :param fdt_today (date): today's date
+    """
+    # logger
+    logging.info("Parsing codeshares")
+
+    # codeshares dictionary
+    ldct_codeshare = {}
+
+    # for all lines...
+    for llst_row in flst_codeshares:
+        # valid row ?
+        if (len(llst_row) < 2) or ("Operadora" == llst_row[0]):
+            # skip row
+            continue
+
+        # data de fim de operação
+        ldt_data_fim = datetime.datetime.strptime(llst_row[6], "%d/%m/%Y").date()
+
+        # à operar ?
+        if not (fdt_today <= ldt_data_fim):
+            # skip row
+            continue
+
+        # operator callsign = (airliner, flight no)
+        lt_callsign_oper = (llst_row[0], int(llst_row[1]) if llst_row[1].isdecimal() else llst_row[1])
+
+        # commercial. callsign = (airliner, flight no)
+        lt_callsign_comm = (llst_row[2], int(llst_row[3]) if llst_row[3].isdecimal() else llst_row[3])
+
+        # não está na lista de codeshares ?
+        if not lt_callsign_oper in ldct_codeshare:
+            # create codeshare
+            ldct_codeshare[lt_callsign_oper] = [lt_callsign_comm]
+
+        # senão, already exists
+        elif lt_callsign_comm not in ldct_codeshare[lt_callsign_oper]:
+            # append codeshare
+            ldct_codeshare[lt_callsign_oper].append(lt_callsign_comm)
+
+    # return codeshares dictionary
+    return ldct_codeshare
+
+# -------------------------------------------------------------------------------------------------
+def parse_registers(flst_registers, fdt_today):
     """
     parse registers
 
-    :param fs_registers (str): SIROS registers
+    :param flst_registers (list): list of SIROS registers
     :param fdt_today (date): today's date
     """
     # logger
@@ -105,11 +275,8 @@ def parse_registers(fs_registers, fdt_today):
     # RPLs dictionary
     ldct_rpls = {}
 
-    # create CSV reader
-    l_reader = csv.reader(fs_registers.splitlines(), delimiter=';')
-
     # for all lines...
-    for llst_row in l_reader:
+    for llst_row in flst_registers:
         # valid row ?
         if (len(llst_row) < 2) or ("Cód. Empresa" == llst_row[0]):
             # skip row
@@ -164,54 +331,11 @@ def parse_registers(fs_registers, fdt_today):
             # coloca na lista de RPLs
             ldct_rpls[lt_callsign] = {"partida": int(ldt_partida.timestamp() * 1000),   # partida
                                       "chegada": int(ldt_chegada.timestamp() * 1000)}   # chegada
-            # codeshare ?
-            if llst_row[27]:
-                # trata codeshare
-                trata_codeshare(fdt_today, llst_row[27], ldct_rpls, lt_callsign)
+            # logging.debug("ldct_rpls: %s", str(ldct_rpls[lt_callsign]))
 
     # return RPLs dictionary
     return ldct_rpls
     
-# -------------------------------------------------------------------------------------------------
-def trata_codeshare(fdt_today, fs_codeshare, fdct_rpls, ft_callsign):
-    """
-    trata codeshare
-    AZU/5321 início: 25/08/2020 fim: 26/03/2022, AZU/5321 início: 04/01/2022 fim: 26/02/2022, AZU/5321 ...
-
-    :param fdt_today (date): today's date
-    :param fs_codeshare (str): codeshares
-    :param fdct_rpls (dict): dicionário de RPL's
-    :param ft_callsign (tuple): callsign    
-    """
-    # split codeshares
-    llst_codeshares = fs_codeshare.split(',')
-
-    # for all codeshares...
-    for ls_codeshare in llst_codeshares:
-        # split codeshare tokens
-        llst_tokens = ls_codeshare.split()
- 
-        # split callsign
-        llst_cs = llst_tokens[0].split('/')
-        
-        # callsign = (airliner, flight no)
-        lt_callsign = (llst_cs[0], int(llst_cs[1]) if llst_cs[1].isdecimal() else llst_cs[1])
-
-        # operational date ? 
-        if "..." != llst_tokens[1]:  
-            # data de início operação
-            ldt_data_ini = datetime.datetime.strptime(llst_tokens[2], "%d/%m/%Y").date()
-            # data de fim de operação
-            ldt_data_fim = datetime.datetime.strptime(llst_tokens[4], "%d/%m/%Y").date()
-
-            # à operar ?
-            if not (ldt_data_ini <= fdt_today <= ldt_data_fim):
-                # skip row
-                continue
-
-        # coloca na lista de RPLs
-        fdct_rpls[lt_callsign] = fdct_rpls[ft_callsign]
-
 # -------------------------------------------------------------------------------------------------
 def main():
     """

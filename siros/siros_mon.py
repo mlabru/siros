@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 # .env
 import dotenv
@@ -67,8 +68,8 @@ def check_rpl(ft_callsign: tuple, fdct_flight: dict):
 
     # first sight ?
     if ft_callsign not in gd.DDCT_FLIGHT_RPLS:
-        # check new flight
-        check_new_flight(ft_callsign, fdct_flight, li_timestamp)
+        # new flight
+        new_flight(ft_callsign, fdct_flight, li_timestamp)
 
     # senão,...
     else:

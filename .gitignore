@@ -2,6 +2,7 @@
 *~
 .bkp/
 .hidden/
+logs/
 registros/
 
 # Byte-compiled / optimized / DLL files

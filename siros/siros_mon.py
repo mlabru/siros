@@ -43,17 +43,19 @@ def check_missing_flights():
     for lt_callsign, ldct_flight in gd.DDCT_FLIGHT_RPLS.items():
         # última visualização mais de 20 minutos atrás ?
         if lf_now - ldct_flight["last"] > (20 * 60):
+            # time diff (adiantado < 0, on-time = 0, atrasado > 0)
+            li_diff = ldct_flight["last"] - ldct_flight["chegada"]
             # atrasado ?  (adiantado < 0, on-time = 0, atrasado > 0)
-            if ldct_flight["last"] - ldct_flight["chegada"] > 0:
+            if li_diff > 0:
                 # logger
                 logging.debug("last sight of %s: %s from: %s [%s]",
-                              str(ft_callsign),
+                              str(lt_callsign),
                               str(ldct_flight),
-                              str(gd.DDCT_SIROS_RPLS[ft_callsign]),
+                              str(gd.DDCT_SIROS_RPLS[lt_callsign]),
                               str((li_diff // 3600000, (li_diff // 60000) % 60)))
 
                 # remove flight
-                del gd.DDCT_FLIGHT_RPLS[ft_callsign]
+                del gd.DDCT_FLIGHT_RPLS[lt_callsign]
 
 # ---------------------------------------------------------------------------------------------
 def check_rpl(ft_callsign: tuple, fdct_flight: dict):
